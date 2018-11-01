@@ -14,8 +14,58 @@ import argparse
 import json
 
 
+def get_product_uids(...):
+    ...
+    return product_uids
+
+
+class AttributeDataset(data.Dataset):
+    def __init__(self,
+                 product_uids,
+                 return_image=False):
+        self.product_uids = product_uids
+        self.return_image = return_image
+        ...
+
+
+    def __getitem__(self, index):
+        uid = self.product_uids[index]
+        image_url = get_product_image_url(uid)
+        image = get_product_image(image_url) if self.return_image else None
+        # include brand, description, etc.
+        product_attributes = get_product_attributes(product_uid)
+        return {'uid': uid,
+                'image_url': image_url,
+                'image': image,
+                'attributes': attributes}
+
+    def __len__(self):
+        return len(self.product_uids)
+
+
+if __name__ == '__main__':
+    print('test')
+    d = PartDataset(root='shapenetcore_partanno_segmentation_benchmark_v0',
+                    class_choice=['Chair'])
+    print(len(d))
+    ps, seg = d[0]
+    print(ps.size(), ps.type(), seg.size(),seg.type())
+
+    d = PartDataset(root='shapenetcore_partanno_segmentation_benchmark_v0',
+                    classification = True)
+    print(len(d))
+    ps, cls = d[0]
+    print(ps.size(), ps.type(), cls.size(),cls.type())
+
+
 class PartDataset(data.Dataset):
-    def __init__(self, root, npoints = 2500, classification = False, class_choice = None, train = True):
+    def __init__(self,
+                 root,
+                 npoints=2500,
+                 classification=False,
+                 class_choice=None,
+                 train=True):
+
         self.npoints = npoints
         self.root = root
         self.catfile = os.path.join(self.root, 'synsetoffset2category.txt')
@@ -27,7 +77,6 @@ class PartDataset(data.Dataset):
             for line in f:
                 ls = line.strip().split()
                 self.cat[ls[0]] = ls[1]
-        #print(self.cat)
         if not class_choice is  None:
             self.cat = {k:v for k,v in self.cat.items() if k in class_choice}
 
@@ -91,12 +140,14 @@ class PartDataset(data.Dataset):
 
 if __name__ == '__main__':
     print('test')
-    d = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0', class_choice = ['Chair'])
+    d = PartDataset(root='shapenetcore_partanno_segmentation_benchmark_v0',
+                    class_choice=['Chair'])
     print(len(d))
     ps, seg = d[0]
     print(ps.size(), ps.type(), seg.size(),seg.type())
 
-    d = PartDataset(root = 'shapenetcore_partanno_segmentation_benchmark_v0', classification = True)
+    d = PartDataset(root='shapenetcore_partanno_segmentation_benchmark_v0',
+                    classification = True)
     print(len(d))
     ps, cls = d[0]
     print(ps.size(), ps.type(), cls.size(),cls.type())
