@@ -1,153 +1,107 @@
-from __future__ import print_function
-import torch.utils.data as data
-from PIL import Image
-import os
-import os.path
-import errno
-import torch
-import json
-import codecs
-import numpy as np
-import sys
+from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
-import argparse
+import os
 import json
+import pandas as pd
+import numpy as np
+from typing import List,\
+                   Dict
 
+class ProductDataset(Dataset):
+    ATTRIBUTES_QUERY_TEMPLATE =\
+        """
+        SELECT
+          *
+        FROM
+          porsche_data.variants
+        WHERE
+          id IN {:s}
+        LIMIT
+          10000
+        """
 
-def get_product_uids(...):
-    ...
-    return product_uids
-
-
-class AttributeDataset(data.Dataset):
     def __init__(self,
-                 product_uids,
-                 return_image=False):
+                 product_uids: List,
+                 path: str,
+                 download: bool,
+                 return_image: bool=False) -> None:
+        """
+        dataset for ss products
+        """
+        # NOTE: the unique id "id" in porsche_data.variants, not "product_id"
         self.product_uids = product_uids
+        self.path = path
         self.return_image = return_image
-        ...
+
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        if download:
+            print('downloading dataset:')
+            from dataradeh20.access.big_query import BigQueryClient
+            bq = BigQueryClient()
+
+            print('querying bigquery for data...')
+            attributes_query = self.ATTRIBUTES_QUERY_TEMPLATE\
+                    .format(''.join(['(', str(self.product_uids)[1:-1], ')']))
+            product_attributes = bq.run_query(attributes_query)
+            print('saving to {:s}...'.format(self.path))
+            product_attributes.to_json(self.path)
+        else:
+            assert os.path.exists(self.path),\
+                "dataset {:s} does not exist.  change path or set download=True"
+        print('loading dataset from {:s}...'.format(self.path))
+        product_attributes = pd.read_json(self.path)
+        self.product_attributes = product_attributes.set_index('variant_id')
 
 
-    def __getitem__(self, index):
+    def __get_item__(self, index: int) -> Dict:
         uid = self.product_uids[index]
-        image_url = get_product_image_url(uid)
-        image = get_product_image(image_url) if self.return_image else None
-        # include brand, description, etc.
-        product_attributes = get_product_attributes(product_uid)
-        return {'uid': uid,
-                'image_url': image_url,
-                'image': image,
-                'attributes': attributes}
+        return self.product_attributes.loc[uid]
 
     def __len__(self):
         return len(self.product_uids)
 
 
 if __name__ == '__main__':
-    print('test')
-    d = PartDataset(root='shapenetcore_partanno_segmentation_benchmark_v0',
-                    class_choice=['Chair'])
-    print(len(d))
-    ps, seg = d[0]
-    print(ps.size(), ps.type(), seg.size(),seg.type())
+    from dataradeh20.access.big_query import BigQueryClient
 
-    d = PartDataset(root='shapenetcore_partanno_segmentation_benchmark_v0',
-                    classification = True)
-    print(len(d))
-    ps, cls = d[0]
-    print(ps.size(), ps.type(), cls.size(),cls.type())
+    IDS_QUERY =\
+        """
+        SELECT
+          variant_id
+        FROM
+          porsche_data.variants
+        LIMIT
+          10000
+        """
 
+    bq = BigQueryClient()
+    IDS = bq.run_query(IDS_QUERY).values.ravel().tolist()
 
-class PartDataset(data.Dataset):
-    def __init__(self,
-                 root,
-                 npoints=2500,
-                 classification=False,
-                 class_choice=None,
-                 train=True):
+    dataset = ProductDataset(product_uids=IDS,
+                             path='test_data/test_path.json',
+                             download=True)
 
-        self.npoints = npoints
-        self.root = root
-        self.catfile = os.path.join(self.root, 'synsetoffset2category.txt')
-        self.cat = {}
-
-        self.classification = classification
-
-        with open(self.catfile, 'r') as f:
-            for line in f:
-                ls = line.strip().split()
-                self.cat[ls[0]] = ls[1]
-        if not class_choice is  None:
-            self.cat = {k:v for k,v in self.cat.items() if k in class_choice}
-
-        self.meta = {}
-        for item in self.cat:
-            #print('category', item)
-            self.meta[item] = []
-            dir_point = os.path.join(self.root, self.cat[item], 'points')
-            dir_seg = os.path.join(self.root, self.cat[item], 'points_label')
-            #print(dir_point, dir_seg)
-            fns = sorted(os.listdir(dir_point))
-            if train:
-                fns = fns[:int(len(fns) * 0.9)]
-            else:
-                fns = fns[int(len(fns) * 0.9):]
-
-            #print(os.path.basename(fns))
-            for fn in fns:
-                token = (os.path.splitext(os.path.basename(fn))[0])
-                self.meta[item].append((os.path.join(dir_point, token + '.pts'), os.path.join(dir_seg, token + '.seg')))
-
-        self.datapath = []
-        for item in self.cat:
-            for fn in self.meta[item]:
-                self.datapath.append((item, fn[0], fn[1]))
+    dataset = ProductDataset(product_uids=IDS,
+                             path='test_data/test_path.json',
+                             download=False)
 
 
-        self.classes = dict(zip(sorted(self.cat), range(len(self.cat))))
-        print(self.classes)
-        self.num_seg_classes = 0
-        if not self.classification:
-            for i in range(len(self.datapath)//50):
-                l = len(np.unique(np.loadtxt(self.datapath[i][-1]).astype(np.uint8)))
-                if l > self.num_seg_classes:
-                    self.num_seg_classes = l
-        #print(self.num_seg_classes)
 
+    # TRYING TO UNDERSTAND ATTRIBUTES OF THE DATA
 
-    def __getitem__(self, index):
-        fn = self.datapath[index]
-        cls = self.classes[self.datapath[index][0]]
-        point_set = np.loadtxt(fn[1]).astype(np.float32)
-        seg = np.loadtxt(fn[2]).astype(np.int64)
-        #print(point_set.shape, seg.shape)
+    # maybe constant by affiliate?  trying with linkshare
+    df = dataset.product_attributes
+    linkshare_uids = df[df.affiliate_id == "linkshare"].affiliate_id
+    linkshare_inds = np.where([uid in linkshare_uids for uid in IDS])[0]
+    lsp = [dataset.__get_item__(ii) for ii in linkshare_inds]
 
-        choice = np.random.choice(len(seg), self.npoints, replace=True)
-        #resample
-        point_set = point_set[choice, :]
-        seg = seg[choice]
-        point_set = torch.from_numpy(point_set)
-        seg = torch.from_numpy(seg)
-        cls = torch.from_numpy(np.array([cls]).astype(np.int64))
-        if self.classification:
-            return point_set, cls
-        else:
-            return point_set, seg
+    def parse_fn(lsp):
+        json.loads(lsp.raw)['attributeClass']['Product_Type']
 
-    def __len__(self):
-        return len(self.datapath)
-
-
-if __name__ == '__main__':
-    print('test')
-    d = PartDataset(root='shapenetcore_partanno_segmentation_benchmark_v0',
-                    class_choice=['Chair'])
-    print(len(d))
-    ps, seg = d[0]
-    print(ps.size(), ps.type(), seg.size(),seg.type())
-
-    d = PartDataset(root='shapenetcore_partanno_segmentation_benchmark_v0',
-                    classification = True)
-    print(len(d))
-    ps, cls = d[0]
-    print(ps.size(), ps.type(), cls.size(),cls.type())
+    # will fail on the 23rd one - full of errors
+    for ii, lsp0 in enumerate(lsp):
+        try:
+            json.loads(lsp0['raw'])['attributeClass']['Product_Type']
+        except:
+            print(ii)
+            break
