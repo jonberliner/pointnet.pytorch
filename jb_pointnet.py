@@ -5,6 +5,9 @@ import torch.nn.functional as F
 
 
 class STNnd(nn.Module):
+    """
+    spatial transformer network in n dimensions
+    """
     def __init__(self,
                  dim_input,
                  act_fn=F.leaky_relu):
@@ -29,7 +32,6 @@ class STNnd(nn.Module):
         self.iden_flat = torch.eye(dim_input).view(1, self.dim_input**2)
 
     def forward(self, x):
-        batchsize = x.size()[0]
         x = self.act_fn(self.bn1(self.conv1(x)))
         x = self.act_fn(self.bn2(self.conv2(x)))
         x = self.act_fn(self.bn3(self.conv3(x)))
@@ -67,25 +69,37 @@ class PointNetfeat(nn.Module):
         self.global_feat = global_feat
 
     def forward(self, x):
-        batchsize = x.size()[0]
-        n_pts = x.size()[2]
-        trans = self.stn(x)
-        x = x.transpose(2, 1)
-        x = torch.bmm(x, trans)
-        x = x.transpose(2, 1)
+        batch_size, dim_input, num_points = x.shape
+
+        # spatial transform
+        trans = self.stn(x)  # bs x dim_input x dim_input
+        x = x.transpose(2, 1)  # bs x num_points x dim_input
+        x = torch.bmm(x, trans)  # bs x num_points x dim_input
+        x = x.transpose(2, 1)  # bs x dim_input x num_points
+
+        # get pointwise features
+        # NOTE: automatically broadcasts to num_points dimension
         x = self.act_fn(self.bn1(self.conv1(x)))
         pointfeat = x
+
+        # get global features integrating pointwise features
         x = self.act_fn(self.bn2(self.conv2(x)))
         x = self.bn3(self.conv3(x))
-        x = torch.max(x, 2, keepdim=True)[0]
+        # reduce along num_points dimension
+        x, _ = torch.max(x, 2, keepdim=True)  # returns max and argmax
         x = x.view(-1, 1024)
-        if self.global_feat:
-            return x, trans
-        else:
-            x = x.view(-1, 1024, 1).repeat(1, 1, n_pts)
-            return torch.cat([x, pointfeat], 1), trans
+
+        if not self.global_feat:
+            x = x.unsqueeze(2).repeat(1, 1, num_points)
+            # append global features to each point features
+            x = torch.cat([x, pointfeat], 1)
+        return x, trans
+
 
 class PointNetCls(nn.Module):
+    """
+    classifier integrating all points into a single response
+    """
     def __init__(self,
                  dim_input,
                  num_classes,
@@ -113,6 +127,9 @@ class PointNetCls(nn.Module):
 
 
 class PointNetDenseCls(nn.Module):
+    """
+    perform pointwise classification eg pixel-level segmentation
+    """
     def __init__(self,
                  dim_input,
                  num_classes,
@@ -133,8 +150,7 @@ class PointNetDenseCls(nn.Module):
         self.bn3 = nn.BatchNorm1d(128)
 
     def forward(self, x):
-        batchsize = x.size()[0]
-        n_pts = x.size()[2]
+        batch_size, _, num_points = x.shape
         x, trans = self.feat(x)
         x = self.act_fn(self.bn1(self.conv1(x)))
         x = self.act_fn(self.bn2(self.conv2(x)))
@@ -142,7 +158,7 @@ class PointNetDenseCls(nn.Module):
         x = self.conv4(x)
         x = x.transpose(2,1).contiguous()
         x = F.log_softmax(x.view(-1, self.num_classes), dim=-1)
-        x = x.view(batchsize, n_pts, self.num_classes)
+        x = x.view(batch_size, num_points, self.num_classes)
         return x, trans
 
 
